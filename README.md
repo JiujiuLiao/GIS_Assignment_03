@@ -31,11 +31,10 @@ The repository is organized as follows:
 ```
 .
 ├── 03_Assignment.Rmd       # Main R Markdown script with all analysis and visualizations
-├── data/
-│   ├── raw/                # Directory for raw downloaded data (rasters, shapefiles)
-│   ├── unzipped/           # Directory for decompressed NetCDF air quality files
-│   └── forest in hectares.xlsx # Supplementary data from the Federal Forest Inventory
-├── output/                 # Directory for saved plots and reports
+├── data/forest in hectares.xlsx # Supplementary data from the Federal Forest Inventory
+├── 03_Assignment.Rproj     # RStudio Project file for easy environment management   
+├── 03_Assignment.html      # Knitted HTML report generated from the Rmd file
+├──.gitignore               # Specifies which files/folders Git should ignore
 └── README.md               # This file
 ```
 
