@@ -1,0 +1,23 @@
+# History files
+.Rhistory
+.Rapp.history
+
+# Session Data
+.RData
+
+# User-specific files
+.Rproj.user/
+
+# Data files that are downloaded by the script
+data/raw/gadm41_DEU_shp.zip
+data/raw/gadm41_DEU_shp/
+data/raw/forest_cover/
+data/aq_17_23.nc
+data/unzipped/
+
+# Output folder
+output/
+
+# Knitted HTML/PDF from Rmd
+*.html
+*.pdf
