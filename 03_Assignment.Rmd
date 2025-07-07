@@ -337,24 +337,24 @@ The map of Dresden at first glance looks as if the forest cover has decreased. U
 ```{r using API to download air quality data}
 #Using API to acquier data fromhttps://ads.atmosphere.copernicus.eu/datasets/cams-europe-air-quality-reanalyses?tab=download
 
-#reticulate::py_install("cdsapi", envname = NULL, method = "auto")
-#reticulate::py_module_available("cdsapi")
+reticulate::py_install("cdsapi", envname = NULL, method = "auto")
+reticulate::py_module_available("cdsapi")
 
-#key_set(
-#  service  = "cds",
-#  username = "liaovalerian@gmail.com"  #change to the email which registered on CDS database
-#)                                      #paste our own API when it asks for password
+key_set(
+  service  = "cds",
+  username = "liaovalerian@gmail.com"  #change to the email which registered on CDS database
+)                                      #paste our own API when it asks for password
 
-#cds_api_key <- key_get(
-#  service  = "cds",
-#  username = "liaovalerian@gmail.com"  #keep it the same as above username
-#)
+cds_api_key <- key_get(
+  service  = "cds",
+  username = "liaovalerian@gmail.com"  #keep it the same as above username
+)
 
 # Export to environment variables for cdsapi, reticulate, or ecmwfr
-#Sys.setenv(
-#  CDSAPI_URL = "https://ads.atmosphere.copernicus.eu/api",
-#  CDSAPI_KEY = cds_api_key
-#)
+Sys.setenv(
+  CDSAPI_URL = "https://ads.atmosphere.copernicus.eu/api",
+  CDSAPI_KEY = cds_api_key
+)
 ```
 
 because the CDS database only provide access for python, so here we used python chunk.
@@ -370,26 +370,26 @@ more instruction for windows please check this website:https://confluence.ecmwf.
 ```{python}
 #$pip install "cdsapi>=0.7.4"
 
-#import cdsapi
+import cdsapi
 
-#dataset = "cams-europe-air-quality-reanalyses"
-#request = {
-#    "variable": [
-#        "nitrogen_dioxide",
-#        "particulate_matter_2.5um"
-#    ],
-#    "model": ["ensemble"],
-#    "level": ["0"],
-#    "type": [
-#        "validated_reanalysis",
-#        "interim_reanalysis"
-#    ],
-#    "year": ["2017", "2023"],
-#    "month": ["04"]
-#}
+dataset = "cams-europe-air-quality-reanalyses"
+request = {
+    "variable": [
+        "nitrogen_dioxide",
+        "particulate_matter_2.5um"
+    ],
+    "model": ["ensemble"],
+    "level": ["0"],
+    "type": [
+        "validated_reanalysis",
+        "interim_reanalysis"
+    ],
+    "year": ["2017", "2023"],
+    "month": ["04"]
+}
 
-#client = cdsapi.Client()
-#client.retrieve(dataset, request).download("data/aq_17_23.nc")
+client = cdsapi.Client()
+client.retrieve(dataset, request).download("data/aq_17_23.nc")
 ```
 
 
