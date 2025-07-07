@@ -1,0 +1,1217 @@
+---
+title: "03_Assignment"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-07-04"
+author: "Igor Moloko, Jiujiu Liao"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+Topic Introduction:
+This study examines the spatial relationship between forest cover changes and air quality improvements in Germany between April 2017 and April 2023. Using forest cover data from the German Aerospace Center (DLR) and air quality reanalysis data from the Copernicus Atmosphere Monitoring Service (CAMS), we analyzed the correlation between changes in forest coverage and concentrations of nitrogen dioxide (NO₂) and fine particulate matter (PM₂.₅). Contrary to expectations, our analysis revealed weak positive correlations between forest cover increase and pollutant concentrations (r = 0.22 for NO₂, r = 0.26 for PM₂.₅, both p < 0.001). These counterintuitive findings suggest that confounding factors such as regional development patterns and urbanization may overshadow the local air quality benefits of forests at the spatial scale examined. The results highlight the complexity of environmental interactions and the importance of considering multiple variables when assessing ecosystem services.
+
+
+```{r Download the necessary libraries}
+library(pacman)
+
+pacman::p_load(
+  httr,          # HTTP requests for downloading data
+  jsonlite,      # JSON parsing
+  readxl,        # Excel file reading
+  ggplot2,       # Advanced plotting
+  keyring,       # Secure credential storage
+  ecmwfr,        # ECMWF data access
+  dplyr,         # Data manipulation
+  reticulate,    # Python integration
+  geodata,       # Geographic data access
+  sf,            # Simple features for spatial data
+  rvest,         # Web scraping
+  raster,        # Raster data manipulation
+  rnaturalearth, # Natural Earth map data
+  rnaturalearthdata,
+  ncdf4,         # NetCDF file handling
+  tools,         # R utilities
+  grid,          # Grid graphics
+  readr,         # Fast file reading
+  ggspatial,     # Spatial visualization enhancements
+  gridExtra,     # Multiple plot arrangements
+  ggrepel,       # Smart label positioning
+  tidygeocoder,  # Geocoding
+  osrm,          # Routing
+  here,          # Project-relative paths
+  tmap,          # Thematic maps
+  terra,         # Modern raster analysis
+  tidyr          # Data tidying
+)
+
+# Establish project root for reproducible file paths
+here::i_am("03_Assignment.Rmd")
+```
+
+# Download the map of Germany
+```{r}
+# Correct paths relative to the project root (where .Rproj is located)
+download_dir <- here("data", "raw")
+unzip_dir <- here("data", "raw", "gadm41_DEU_shp")
+
+# Create directories if necessary
+dir.create(download_dir, recursive = TRUE, showWarnings = FALSE)
+dir.create(unzip_dir, recursive = TRUE, showWarnings = FALSE)
+
+# Links and file names
+url <- "https://geodata.ucdavis.edu/gadm/gadm4.1/shp/gadm41_DEU_shp.zip"
+destfile <- file.path(download_dir, "gadm41_DEU_shp.zip")
+
+# Download if the file does not exist yet
+if (!file.exists(destfile)) {
+  download.file(url, destfile, mode = "wb")
+  message("✔️ File downloaded")
+} else {
+  message("📦 ZIP file already exists - skip download")
+}
+
+# Unpacking if not already unpacked
+if (!file.exists(file.path(unzip_dir, "gadm41_DEU_1.shp"))) {
+  unzip(destfile, exdir = unzip_dir)
+  message("✔️ The file is unpacked.")
+} else {
+  message("📂 Shapefile is already unpacked - skip")
+}
+
+# Loading shapefile
+gadm <- st_read(file.path(unzip_dir, "gadm41_DEU_1.shp"))
+
+# Admin 0 that is the all country
+deu_0 <- st_read(here("data","raw", "gadm41_DEU_shp", "gadm41_DEU_0.shp"))
+
+admin_0 <- ggplot()+
+  geom_sf(data = deu_0)+
+  theme_minimal()
+print(admin_0)
+
+# Admin 1 that for Germany is states
+deu_1 <- st_read(here("data","raw", "gadm41_DEU_shp", "gadm41_DEU_1.shp"))
+
+admin_1 <- ggplot()+
+  geom_sf(data = deu_1)+
+  theme_minimal()
+print(admin_1)
+
+# Admin 2 that is regions
+deu_2 <- st_read(here("data","raw", "gadm41_DEU_shp", "gadm41_DEU_2.shp"))
+
+
+admin_2 <- ggplot()+
+  geom_sf(data = deu_2)+
+  theme_minimal()
+print(admin_2)
+
+deu_3 <- st_read(here("data","raw", "gadm41_DEU_shp", "gadm41_DEU_3.shp"))
+
+# Admin 3 that is provinces
+admin_3 <- ggplot()+
+  geom_sf(data = deu_3)+
+  theme_minimal()
+print(admin_3)
+
+# Admin 4 that is municipalities
+deu_4 <- st_read(here("data","raw", "gadm41_DEU_shp", "gadm41_DEU_4.shp"))
+
+admin_4 <- ggplot()+
+  geom_sf(data = deu_4)+
+  theme_minimal()
+print(admin_4)
+
+```
+
+
+
+# Download maps of forests in Germany for 2017 and 2023
+```{r}
+# Data folder
+dir_raster <- here("data", "raw", "forest_cover")
+dir_shp <- here("data", "raw", "gadm41_DEU_shp")
+# Create a folder for rasters if there is none
+if (!dir.exists(dir_raster)) dir.create(dir_raster, recursive = TRUE)
+
+# Paths for raster files
+file_2017 <- file.path(dir_raster, "2017_cover_overview.tif")
+file_2023 <- file.path(dir_raster, "2023_cover_overview.tif")
+
+# Links to files
+url_2017 <- "https://download.geoservice.dlr.de/FSG/files/2017/2017_cover_overview.tif"
+url_2023 <- "https://download.geoservice.dlr.de/FSG/files/2023/2023_cover_overview.tif"
+
+# Download rasters
+httr::GET(url_2017, httr::write_disk(file_2017, overwrite = TRUE))
+httr::GET(url_2023, httr::write_disk(file_2023, overwrite = TRUE))
+
+# Loading shapefile (level 0 - all of Germany)
+gadm_ger <- sf::st_read(file.path(dir_shp, "gadm41_DEU_0.shp"))
+
+# Loading rasters
+rast_2017 <- terra::rast(file_2017)
+rast_2023 <- terra::rast(file_2023)
+
+# We cut the rasters along the borders of Germany (sf -> terra)
+# First we transform sf into a SpatVector
+gadm_terra <- terra::vect(gadm_ger)
+
+# We crop the raster around the country
+rast_2017_crop <- terra::crop(rast_2017, gadm_terra)
+rast_2017_mask <- terra::mask(rast_2017_crop, gadm_terra)
+
+rast_2023_crop <- terra::crop(rast_2023, gadm_terra)
+rast_2023_mask <- terra::mask(rast_2023_crop, gadm_terra)
+
+# Let's visualize
+plot(rast_2017_mask, main = "Forest Cover 2017 (Germany)")
+text(x = xmin(rast_2017_mask) + 0.5, 
+     y = ymax(rast_2017_mask) - 0.5, 
+     labels = "Forest cover in Germany, 2017", 
+     col = "darkgreen", cex = 1.2, pos = 4)
+
+plot(rast_2023_mask, main = "Forest Cover 2023 (Germany)")
+text(x = xmin(rast_2023_mask) + 0.5, 
+     y = ymax(rast_2023_mask) - 0.5, 
+     labels = "Forest cover in Germany, 2023", 
+     col = "darkgreen", cex = 1.2, pos = 4)
+
+```
+Visually, the maps show that the forest area in Germany has increased over the past 6 years, but to confirm this, we need to calculate the numerical values.
+
+
+
+An excel table was created based on data from the website https://www.bundeswaldinventur.de/
+```{r}
+# Path to Excel file
+file_excel <- here("data", "forest in hectares.xlsx")
+# Loading data
+forest_2017 <- read_excel(file_excel, sheet = "2017")
+forest_2023 <- read_excel(file_excel, sheet = "2023")
+
+# Load the forest area for Germany from each sheet
+germany_2017 <- forest_2017[forest_2017$Land == "Deutschland (alle Länder)", ]
+germany_2023 <- forest_2023[forest_2023$Land == "Deutschland (alle Länder)", ]
+
+# Extract total forest area in hectares
+wald_2017 <- germany_2017$Wald
+wald_2023 <- germany_2023$Wald
+
+# Calculate the change in forest area
+change <- wald_2023 - wald_2017
+
+# Display the results
+cat("Forest area in Germany in 2017: ", format(wald_2017, big.mark = ","), "ha\n")
+cat("Forest area in Germany in 2023: ", format(wald_2023, big.mark = ","), "ha\n")
+cat("Change in forest area: ", format(change, big.mark = ","), "ha\n")
+
+```
+Results indicates a modest overall increase in forest area over the six-year period, suggesting that reforestation and afforestation efforts have slightly outpaced deforestation and land-use changes.
+
+
+
+Let's build a map of Saxony's forests for a similar period of time
+```{r}
+
+# 1. Choose Saxony (level 1 - lands)
+saxony_sf <- deu_1[deu_1$NAME_1 == "Sachsen", ]
+saxony_vect <- terra::vect(saxony_sf)
+
+# 2. We cut according to Saxony
+saxony_2017 <- terra::mask(terra::crop(rast_2017, saxony_vect), saxony_vect)
+saxony_2023 <- terra::mask(terra::crop(rast_2023, saxony_vect), saxony_vect)
+
+# 3. Visualization
+par(mfrow = c(1, 2))
+plot(saxony_2017, main = "Sachsen Forest Cover 2017", col = terrain.colors(10))
+plot(saxony_2023, main = "Sachsen Forest Cover 2023", col = terrain.colors(10))
+```
+Looking at the map of forest cover in Saxony, one can also notice their increase, but to prove it, we will calculate a specific value
+
+
+
+We calculate data for Saxony
+```{r}
+# Filtering data by Saxony
+saxony_2017 <- forest_2017[forest_2017$Land == "Sachsen", ]
+saxony_2023 <- forest_2023[forest_2023$Land == "Sachsen", ]
+
+# Extraction of forest area
+wald_saxony_2017 <- saxony_2017$Wald
+wald_saxony_2023 <- saxony_2023$Wald
+
+# Calculating the change
+change_saxony <- wald_saxony_2023 - wald_saxony_2017
+
+# Output of results
+cat("Forest area in Saxony in 2017: ", format(wald_saxony_2017, big.mark = ","), "ha\n")
+cat("Forest area in Saxony in 2023: ", format(wald_saxony_2023, big.mark = ","), "ha\n")
+cat("Change in forest area (Saxony): ", format(change_saxony, big.mark = ","), "ha\n")
+
+```
+This reflects a small but positive increase in the forest area in Saxony over the six-year period, indicating ongoing efforts toward forest conservation and expansion in the region.
+
+
+Let's check the forest cover data of Dresden
+```{r}
+# Folder with the original raster data (assuming it has already been downloaded)
+dir_raster <- here("data", "raw", "forest_cover")
+
+file_2017 <- file.path(dir_raster, "2017_cover_overview.tif")
+file_2023 <- file.path(dir_raster, "2023_cover_overview.tif")
+
+# Loading rasters
+rast_2017 <- terra::rast(file_2017)
+rast_2023 <- terra::rast(file_2023)
+
+# Load Dresden borders
+# Use admin level 3 for Germany, then filter by Dresden
+dir_shp <- here("data", "raw", "gadm41_DEU_shp")
+deu_3 <- sf::st_read(file.path(dir_shp, "gadm41_DEU_3.shp"))
+
+dresden_sf <- deu_3 %>% dplyr::filter(NAME_3 == "Dresden") 
+
+# Convert to SpatVector terra for masking
+dresden_vect <- terra::vect(dresden_sf)
+
+# Crop the raster to the Dresden borders
+dresden_2017 <- terra::crop(rast_2017, dresden_vect)
+dresden_2017 <- terra::mask(dresden_2017, dresden_vect)
+
+dresden_2023 <- terra::crop(rast_2023, dresden_vect)
+dresden_2023 <- terra::mask(dresden_2023, dresden_vect)
+
+# Resampling to increase resolution (2x)
+target_res_2017 <- terra::rast(res = terra::res(dresden_2017)/2, extent = terra::ext(dresden_2017))
+dresden_2017_highres <- terra::resample(dresden_2017, target_res_2017, method = "bilinear")
+
+target_res_2023 <- terra::rast(res = terra::res(dresden_2023)/2, extent = terra::ext(dresden_2023))
+dresden_2023_highres <- terra::resample(dresden_2023, target_res_2023, method = "bilinear")
+
+# Function to convert raster to data.frame for ggplot
+rast_to_df <- function(rast) {
+  df <- as.data.frame(rast, xy = TRUE)
+  colnames(df) <- c("x", "y", "value")
+  df <- df[!is.na(df$value), ]
+  return(df)
+}
+
+df_2017 <- rast_to_df(dresden_2017_highres)
+df_2023 <- rast_to_df(dresden_2023_highres)
+
+# Visualization with ggplot2
+p1 <- ggplot(df_2017) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  scale_fill_viridis_c(option = "C", na.value = "transparent") +
+  coord_sf() +
+  ggtitle("Forest Cover in Dresden 2017") +
+  theme_minimal()
+
+p2 <- ggplot(df_2023) +
+  geom_raster(aes(x = x, y = y, fill = value)) +
+  scale_fill_viridis_c(option = "C", na.value = "transparent") +
+  coord_sf() +
+  ggtitle("Forest Cover in Dresden 2023") +
+  theme_minimal()
+
+#png(filename = here("output", "dresden_forest_2017_2023.png"), 
+#    width = 4000, height = 2000, res = 300)
+#grid.arrange(p1, p2, ncol = 2)
+#dev.off()
+
+# Display in RStudio
+grid.arrange(p1, p2, ncol = 2)
+```
+The map of Dresden at first glance looks as if the forest cover has decreased. Unfortunately, we did not find any digital data, so it is difficult to prove
+
+
+
+
+
+#############Part 2 Air Quality Data############# 
+```{r using API to download air quality data}
+#Using API to acquier data fromhttps://ads.atmosphere.copernicus.eu/datasets/cams-europe-air-quality-reanalyses?tab=download
+
+#reticulate::py_install("cdsapi", envname = NULL, method = "auto")
+#reticulate::py_module_available("cdsapi")
+
+#key_set(
+#  service  = "cds",
+#  username = "liaovalerian@gmail.com"  #change to the email which registered on CDS database
+#)                                      #paste our own API when it asks for password
+
+#cds_api_key <- key_get(
+#  service  = "cds",
+#  username = "liaovalerian@gmail.com"  #keep it the same as above username
+#)
+
+# Export to environment variables for cdsapi, reticulate, or ecmwfr
+#Sys.setenv(
+#  CDSAPI_URL = "https://ads.atmosphere.copernicus.eu/api",
+#  CDSAPI_KEY = cds_api_key
+#)
+```
+
+because the CDS database only provide access for python, so here we used python chunk.
+
+2 prerequisites:
+    1.please download python
+    2.please create a file called '.cdsapirc' under the path of User/$home
+    3.paste this two lines of code in this '.cdsapirc' file
+    url: https://ads.atmosphere.copernicus.eu/api
+    key: 957eaa7d-2d43-4f56-893a-ec7c34875c99
+
+more instruction for windows please check this website:https://confluence.ecmwf.int/display/CKB/How+to+install+and+use+CDS+API+on+Windows    
+```{python}
+#$pip install "cdsapi>=0.7.4"
+
+#import cdsapi
+
+#dataset = "cams-europe-air-quality-reanalyses"
+#request = {
+#    "variable": [
+#        "nitrogen_dioxide",
+#        "particulate_matter_2.5um"
+#    ],
+#    "model": ["ensemble"],
+#    "level": ["0"],
+#    "type": [
+#        "validated_reanalysis",
+#        "interim_reanalysis"
+#    ],
+#    "year": ["2017", "2023"],
+#    "month": ["04"]
+#}
+
+#client = cdsapi.Client()
+#client.retrieve(dataset, request).download("data/aq_17_23.nc")
+```
+
+
+```{r}
+# Load and decompress the NetCDF file
+#We need to decompress the file downloaded above so that the `ncdf4` package can read it.
+#This step is necessary because we batch-downloaded data for two different gases
+#over two years, which the ncdf4 packages into a single archive that cannot be read directly.
+if (file.exists("data/aq_17_23.nc") && tools::file_ext("data/aq_17_23.nc") == "nc") {
+  tryCatch({
+    utils::unzip("data/aq_17_23.nc", exdir = "data/unzipped")
+  }, error = function(e) {
+    message("Not a ZIP file, try untar:")
+    tryCatch({
+      utils::untar("data/aq_17_23.nc", exdir = "data/unzipped")
+    }, error = function(e2) {
+      stop("Could not decompress the file, it might not be a standard NetCDF archive.")
+    })
+  })
+}
+
+files <- list.files("data/unzipped", pattern = "\\.nc$", full.names = TRUE)
+if (length(files) == 0) stop("No .nc files were found.")
+```
+
+
+```{r Data Processing for NO₂ Analysis}
+# 1. Load and Process Air Quality Data
+# Define a reusable function to process NO2 data from NetCDF files
+# This function standardizes the workflow for both 2017 and 2023 data
+process_no2_data <- function(files, year_index, year_name) {
+  # Open NetCDF file
+  nc_file <- nc_open(files[year_index])
+  
+  # Extract spatial coordinates to properly georeference the data
+  lon <- ncvar_get(nc_file, "lon")  
+  lat <- ncvar_get(nc_file, "lat")
+  
+  # Extract NO2 concentration data (stored as 3D array: lon x lat x time)
+  no2_array <- ncvar_get(nc_file, "no2")
+  
+  # Handle missing values using NetCDF metadata to ensure data quality
+  fillvalue <- ncatt_get(nc_file, "no2", "_FillValue")
+  no2_array[no2_array == fillvalue$value] <- NA
+  
+  # Calculate temporal mean to get average NO2 concentrations for April
+  # This reduces temporal variability and focuses on spatial patterns
+  no2_mean <- apply(no2_array, c(1,2), mean, na.rm=TRUE)
+  
+  # Create georeferenced raster object for spatial analysis
+  # Transpose is needed because NetCDF stores data differently than raster expects
+  no2_raster <- raster(t(no2_mean), 
+                      xmn=min(lon), xmx=max(lon),
+                      ymn=min(lat), ymx=max(lat),
+                      crs=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+  
+  #Correct orientation to match standard geographic conventions
+  no2_raster <- flip(no2_raster, direction='y')
+  
+  # Close file connection to free system resources
+  nc_close(nc_file)
+  
+  return(no2_raster)
+}
+
+
+# Load NO2 data for both time periods
+# File order in the downloaded archive: NO2_2023, PM2.5_2023, NO2_2017, PM2.5_2017
+no2_2023 <- process_no2_data(files, 1, "2023")
+no2_2017 <- process_no2_data(files, 3, "2017")
+
+# Crop NO2 data to Germany's boundaries to focus analysis on study area
+no2_2023_ger <- crop(no2_2023, deu_0)
+no2_2023_ger <- mask(no2_2023_ger, deu_0)
+no2_2017_ger <- crop(no2_2017, deu_0)
+no2_2017_ger <- mask(no2_2017_ger, deu_0)
+```
+
+
+Forest Cover Change(Left Panel):
+The forest cover change map reveals a heterogeneous pattern of gains and losses across Germany. The color scale ranges from red (indicating forest loss, up to -25 units) to dark green (indicating forest gain, up to +50 units), with white representing no change. Notable patterns include:
+
+Predominant forest losses (red areas) are concentrated in the southern regions, particularly in Bavaria and Baden-Württemberg
+Forest gains (green areas) are scattered throughout the country but appear most prominent in central Germany, with a particularly intense green patch visible in the central-eastern region
+The overall pattern suggests a mixed trend rather than uniform forest expansion or contraction across the country
+
+NO₂ Concentration Change(Right Panel):
+The nitrogen dioxide (NO₂) concentration change map displays a more uniform pattern across Germany. The color scale uses blue to represent decreases in NO₂ concentrations (up to -10 μg/m³), with lighter shades indicating smaller changes. Key observations include:
+
+A widespread reduction in NO₂ concentrations across virtually the entire country, shown by the dominant blue coloring
+The most substantial decreases (darkest blue) appear in the northwestern regions, likely corresponding to major urban and industrial areas
+The improvement in air quality appears relatively consistent, with no areas showing increases in NO₂ concentrations
+
+```{r Spatial Alignment and Change Detection}
+# Convert between raster packages for compatibility
+# terra package offers better performance for large rasters
+forest_2017_r <- rast_2017_mask
+forest_2023_r <- rast_2023_mask
+
+# Convert NO2 rasters to terra format for consistent processing
+no2_2017_terra <- rast(no2_2017_ger)
+no2_2023_terra <- rast(no2_2023_ger)
+
+# Align 2023 data to 2017 grid to ensure valid pixel-by-pixel comparison
+no2_2023_resample <- terra::resample(no2_2023_terra, no2_2017_terra, method = "bilinear")
+
+# Resample forest data to match NO2 resolution for correlation analysis
+# Bilinear interpolation preserves spatial patterns while changing resolution
+forest_2017_resample <- terra::resample(forest_2017_r, no2_2017_terra, method = "bilinear")
+forest_2023_resample <- terra::resample(forest_2023_r, no2_2023_terra, method = "bilinear")
+forest_2023_aligned <- terra::resample(forest_2023_resample, forest_2017_resample, method = "bilinear")
+
+# Calculate pixel-wise changes to identify spatial patterns of environmental change
+forest_change <- forest_2023_aligned - forest_2017_resample
+no2_change <- no2_2023_resample - no2_2017_terra
+
+# Convert rasters to data frames for ggplot2 visualization
+# This allows for more flexible and publication-quality maps
+df_forest_change <- as.data.frame(forest_change, xy = TRUE)
+names(df_forest_change)[3] <- "Forest_Change"
+df_forest_change <- df_forest_change[!is.na(df_forest_change$Forest_Change), ]
+
+df_no2_change <- as.data.frame(no2_change, xy = TRUE) 
+names(df_no2_change)[3] <- "NO2_Change"
+df_no2_change <- df_no2_change[!is.na(df_no2_change$NO2_Change), ]
+
+# Create side-by-side maps showing forest and air quality changes
+# Color schemes chosen to intuitively represent improvements (green/blue) vs degradation (red)
+
+# Forest change map with diverging color scale centered at zero
+p_forest_change <- ggplot(df_forest_change) +
+  geom_raster(aes(x = x, y = y, fill = Forest_Change)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_gradient2(low = "red", mid = "white", high = "darkgreen",
+                      midpoint = 0, name = "Forest\nChange") +
+  coord_sf(expand = FALSE) +
+  ggtitle("Forest Cover Change (2017-2023)") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+# NO2 change map with inverse color scale (blue = improvement, red = degradation)
+p_no2_change <- ggplot(df_no2_change) +
+  geom_raster(aes(x = x, y = y, fill = NO2_Change)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                      midpoint = 0, name = expression("NO"[2]*" Change (μg/m"^3*")")) +
+  coord_sf(expand = FALSE) +
+  ggtitle(expression("NO"[2]*" Concentration Change (2017–2023)")) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+# Display maps side by side for comparison
+grid.arrange(p_forest_change, p_no2_change, ncol = 2)
+```
+This image displays two maps illustrating the distribution of Nitrogen Dioxide concentrations across Germany for the years 2017 and 2023.
+
+In 2017, higher concentrations of NO₂, reaching up to 30 µg/m³, are visible in several urban and industrial areas, particularly in western and southern Germany.
+
+By 2023, there is a noticeable overall decrease in NO₂ levels across the country. The color scale for 2023 indicates a lower maximum concentration, around 20 µg/m³. While some urban regions still show relatively higher concentrations compared to rural areas, the peak levels are visibly lower than in 2017, and the spatial extent of these higher concentration zones appears to have diminished.
+```{r}
+# Helper function to convert raster data to ggplot-compatible format
+# This standardizes the data preparation workflow
+raster_to_df <- function(rast, value_name = "value") {
+  df <- as.data.frame(rast, xy = TRUE)
+  names(df)[3] <- value_name
+  df <- df[!is.na(df[[value_name]]), ]
+  return(df)
+}
+
+# Prepare NO2 distribution data for visualization
+df_no2_2017 <- raster_to_df(no2_2017_ger, "NO2")
+df_no2_2023 <- raster_to_df(no2_2023_ger, "NO2")
+
+# Create distribution maps to show absolute NO2 levels and identify pollution hotspots
+# Plasma color scale chosen for its perceptual uniformity and colorblind-friendliness
+
+p_no2_2017 <- ggplot(df_no2_2017) +
+  geom_raster(aes(x = x, y = y, fill = NO2)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_viridis_c(option = "plasma", name = expression("NO"[2]*" (μg/m"^3*")")) +
+  coord_sf(expand = FALSE) +
+  ggtitle("Nitrogen Dioxide Distribution 2017") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+p_no2_2023 <- ggplot(df_no2_2023) +
+  geom_raster(aes(x = x, y = y, fill = NO2)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_viridis_c(option = "plasma", name = expression("NO"[2]*" (μg/m"^3*")")) +
+  coord_sf(expand = FALSE) +
+  ggtitle("Nitrogen Dioxide Distribution 2023") +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+# Display distribution maps for temporal comparison
+grid.arrange(p_no2_2017, p_no2_2023, ncol = 2)
+```
+
+This series of maps illustrates the changes in mean Nitrogen Dioxide concentrations across German states between 2017 and 2023.
+
+The first two maps show the NO₂ distribution in 2017 and 2023, respectively, using the same "pretty" interval classification. In 2017, higher concentrations (ranging from 10 to 18 µg/m³) were concentrated in western and southern states, as well as the city-states of Berlin and Hamburg. By 2023, a clear nationwide reduction is visible, with the highest concentrations dropping to a range of 8 to 12 µg/m³.
+
+The third map, "NO₂ Concentration Change (2017-2023)", quantifies this trend. It reveals that every state experienced a decrease in NO₂ levels. The most significant reductions, between -5 and -7 µg/m³, occurred in the western states of North Rhine-Westphalia, Hesse, and Baden-Württemberg, which were previously areas with higher pollution.
+
+Finally, the "Quantile Classification" map for 2023 groups the states into four equal sets based on their pollution levels. This highlights the relative distribution: despite the overall decrease, states like North Rhine-Westphalia, Hamburg, and Berlin remain in the highest quartile for NO₂ concentration, while the northeastern states consistently rank in the lowest.
+```{r}
+# State-level analysis helps identify regional patterns
+# Disable autoscaling for consistent map appearance
+tmap_options(component.autoscale = FALSE)
+
+# Extract mean NO2 values for each German state (Bundesland)
+# This aggregation facilitates state-level policy discussions
+deu_1$no2_2017 <- terra::extract(no2_2017_terra, vect(deu_1), fun = mean, na.rm = TRUE)[,2]
+deu_1$no2_2023 <- terra::extract(no2_2023_terra, vect(deu_1), fun = mean, na.rm = TRUE)[,2]
+deu_1$no2_change <- deu_1$no2_2023 - deu_1$no2_2017
+
+# NO2 distribution in 2017
+tm_shape(deu_1) +
+  tm_polygons(fill = "no2_2017", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "plasma"),
+              fill.legend = tm_legend(title = expression("NO"[2]*" 2017 (μg/m³)"))) +
+  tm_title(expression("NO"[2]*" Distribution in Germany 2017")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+
+# NO2 distribution in 2023  
+tm_shape(deu_1) +
+  tm_polygons(fill = "no2_2023", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "plasma"),
+              fill.legend = tm_legend(title = expression("NO"[2]*" 2023 (μg/m³)"))) +
+  tm_title(expression("NO"[2]*" Distribution in Germany 2023")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+
+# NO2 change (2017-2023)
+tm_shape(deu_1) +
+  tm_polygons(fill = "no2_change", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "brewer.rd_bu", midpoint = 0),
+              fill.legend = tm_legend(title = expression("NO"[2]*" Change (μg/m³)"))) +
+  tm_title(expression("NO"[2]*" Concentration Change (2017-2023)")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+
+# Quantile-based classification
+tm_shape(deu_1) +
+  tm_polygons(fill = "no2_2023", 
+              fill.scale = tm_scale_intervals(style = "quantile", values = "viridis"),
+              fill.legend = tm_legend(title = expression("NO"[2]*" 2023 (μg/m³)"))) +
+  tm_title(expression("NO"[2]*" Distribution - Quantile Classification")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+```
+
+
+
+```{r}
+# 4. Descriptive Statistics
+# Extract values for analysis
+dim(forest_change)
+dim(no2_change)
+forest_change$`2023_cover_overview_1`
+forest_change$`2023_cover_overview_2`
+forest_change$`2023_cover_overview_3`
+forest_change_vals <- values(forest_change$`2023_cover_overview_1`)
+no2_change_vals <- values(no2_change)
+
+# # Remove NA values to ensure valid statistical calculations
+# This creates paired observations for correlation analysis
+valid_indices <- which(!is.na(forest_change_vals) & !is.na(no2_change_vals))
+forest_change_clean <- forest_change_vals[valid_indices]
+no2_change_clean <- no2_change_vals[valid_indices]
+
+# Calculate descriptive statistics to understand data distributions
+# These metrics provide context for interpreting correlation results
+cat("=== DESCRIPTIVE STATISTICS ===\n")
+cat("Forest Cover Change:\n")
+cat("Mean:", round(mean(forest_change_clean), 4), "\n")
+cat("SD:", round(sd(forest_change_clean), 4), "\n")
+cat("Min:", round(min(forest_change_clean), 4), "\n")
+cat("Max:", round(max(forest_change_clean), 4), "\n")
+cat("Median:", round(median(forest_change_clean), 4), "\n")
+
+cat("\nNO2 Concentration Change:\n")
+cat("Mean:", round(mean(no2_change_clean), 4), "\n")
+cat("SD:", round(sd(no2_change_clean), 4), "\n")
+cat("Min:", round(min(no2_change_clean), 4), "\n")
+cat("Max:", round(max(no2_change_clean), 4), "\n")
+cat("Median:", round(median(no2_change_clean), 4), "\n")
+
+# 5. Correlation Analysis
+# Perform correlation analysis to test the hypothesis of forest-air quality relationship
+correlation <- cor(forest_change_clean, no2_change_clean, method = "pearson")
+cor_test <- cor.test(forest_change_clean, no2_change_clean)
+
+cat("\n=== CORRELATION ANALYSIS ===\n")
+cat("Pearson Correlation Coefficient:", round(correlation, 4), "\n")
+cat("P-value:", format(cor_test$p.value, scientific = TRUE), "\n")
+cat("95% Confidence Interval:", round(cor_test$conf.int[1], 4), "to", round(cor_test$conf.int[2], 4), "\n")
+```
+
+The scatter plot and the positive correlation coefficient show a counterintuitive trend: areas with greater forest gain (or less forest loss, moving right on the x-axis) are associated with a smaller decrease in NO₂ pollution (a less negative, or higher, value on the y-axis).
+
+It is crucial not to interpret this as causation (i.e., that adding forests worsens air pollution). 
+```{r}
+# Create scatter plot to visualize the correlation
+# Low alpha value reveals data density in overlapping points
+df_correlation <- data.frame(
+  Forest_Change = forest_change_clean,
+  NO2_Change = no2_change_clean
+)
+
+p_scatter <- ggplot(df_correlation, aes(x = Forest_Change, y = NO2_Change)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  labs(x = "Forest Cover Change", 
+       y = expression("NO"[2]*" Concentration Change (2017–2023)"),
+       title = bquote("Forest Change vs NO"[2]*" Change"* 
+                     "\nCorrelation: "*.(round(correlation, 3))*
+                     " (p = "*.(format(cor_test$p.value, digits = 3))*")")) +
+  theme_minimal()
+
+print(p_scatter)
+
+```
+
+This map classifies the relationship between forest cover change and NO₂ air quality change across Germany, revealing distinct regional patterns. Each pixel is colored based on whether its changes were better or worse than the national median.
+
+Light Blue - "Unexpected 2": The most widespread pattern, especially in western Germany, shows areas where forest cover decreased, yet NO₂ levels still improved more than the national median. This is a critical finding: it strongly suggests that in these historically industrial regions, large-scale factors like environmental policies, traffic reduction, and changes in industry had a far more significant impact on improving air quality than local changes in forest cover.
+
+Green - "Positive Impact": Concentrated in central Germany, these areas represent the ideal scenario where an increase in forest cover occurred alongside a strong decrease in NO₂ pollution.
+
+Challenging Areas (Red & Orange): The red areas ("Negative Impact"), mainly in the northeast, are regions of concern where forest cover was lost while air quality improvements lagged. The orange areas ("Unexpected 1") show that even with gains in forest cover, these regions failed to see a corresponding significant improvement in air quality, pointing to other persistent local pollution sources.
+```{r}
+#6. Spatial Overlay Analysis Map
+# Define function to classify spatial relationships
+# This creates four categories based on expected vs unexpected relationships
+create_classification <- function(forest_change, no2_change) {
+  # Use median as threshold to balance categories
+  # This ensures roughly equal representation in the classification
+  forest_med <- median(forest_change, na.rm = TRUE)
+  no2_med <- median(no2_change, na.rm = TRUE)
+  
+  classification <- rep(NA, length(forest_change))
+  
+  # Define four relationship categories:
+  # Positive Impact: Forest increase with pollution decrease 
+  # Negative Impact: Forest decrease with pollution increase 
+  # Unexpected patterns: Both increase or both decrease 
+  classification[forest_change > forest_med & no2_change < no2_med] <- "Positive Impact"  # Forest+ NO2-
+  classification[forest_change < forest_med & no2_change > no2_med] <- "Negative Impact"  # Forest- NO2+
+  classification[forest_change > forest_med & no2_change > no2_med] <- "Unexpected 1"     # Forest+ NO2+
+  classification[forest_change < forest_med & no2_change < no2_med] <- "Unexpected 2"     # Forest- NO2-
+  
+  return(classification)
+}
+
+# Create classification raster,This helps identify regions with different forest-pollution relationships
+classification_vals <- create_classification(forest_change_clean, no2_change_clean)
+
+# Create a raster for classification
+class_raster <- forest_change$`2023_cover_overview_1`
+values(class_raster)[valid_indices] <- classification_vals
+
+# Convert to data frame for plotting
+df_classification <- raster_to_df(class_raster, "Classification")
+df_classification$Classification <- factor(df_classification$Classification)
+
+# Overlay analysis map
+p_overlay <- ggplot(df_classification) +
+  geom_raster(aes(x = x, y = y, fill = Classification)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.8) +
+  scale_fill_manual(values = c("Positive Impact" = "darkgreen",
+                              "Negative Impact" = "red",
+                              "Unexpected 1" = "orange",
+                              "Unexpected 2" = "lightblue"),
+                   na.value = "white") +
+  coord_sf(expand = FALSE) +
+  ggtitle("Forest-Air Quality Relationship Classification") +
+  labs(
+    title = "Forest-Air Quality Relationship Classification",
+    # Use '\n' to create a line break in the subtitle for better readability
+    subtitle = "Green: Forest↑ NO₂↓ | Red: Forest↓ NO₂↑\nOrange: Forest↑ NO₂↑ | Blue: Forest↓ NO₂↓"
+  ) +
+  theme_minimal() +
+  # Use theme() to center the title and subtitle
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle = element_text(hjust = 0.5, size = 10)
+  )
+
+
+print(p_overlay)
+
+# Calculate area distribution by classification category
+# These percentages help quantify the prevalence of different relationship patterns
+class_table <- table(classification_vals)
+class_percentages <- round(prop.table(class_table) * 100, 2)
+
+cat("\n=== SPATIAL OVERLAY ANALYSIS ===\n")
+cat("Area distribution by category:\n")
+for(i in names(class_percentages)) {
+  cat(i, ":", class_percentages[i], "%\n")
+}
+
+
+#7.Summary Statistics Table
+# Create summary table
+summary_stats <- data.frame(
+  Variable = c("Forest Cover Change", "NO₂ Concentration Change"),
+  Mean = c(round(mean(forest_change_clean), 4), round(mean(no2_change_clean), 4)),
+  SD = c(round(sd(forest_change_clean), 4), round(sd(no2_change_clean), 4)),
+  Min = c(round(min(forest_change_clean), 4), round(min(no2_change_clean), 4)),
+  Max = c(round(max(forest_change_clean), 4), round(max(no2_change_clean), 4)),
+  Median = c(round(median(forest_change_clean), 4), round(median(no2_change_clean), 4))
+)
+
+print(summary_stats)
+
+cat("\n=== ANALYSIS COMPLETE ===\n")
+cat("Key Findings:\n")
+cat("1. Correlation coefficient:", round(correlation, 3), "\n")
+cat("2. Statistical significance: p =", format(cor_test$p.value, scientific = TRUE), "\n")
+```
+
+
+```{r # PM2.5 vs Forest Cover Analysis} 
+# the whole process is similar to NO2
+# 1. Process PM2.5 data for 2017 and 2023 
+process_pm25_data <- function(files, year_index, year_name) {
+  # Open NetCDF file
+  nc_file <- nc_open(files[year_index])
+  
+  # Extract coordinates
+  lon <- ncvar_get(nc_file, "lon")  
+  lat <- ncvar_get(nc_file, "lat")
+  
+  # Extract PM2.5 data
+  pm25_array <- ncvar_get(nc_file, "pm2p5")  # Note: PM2.5 variable name
+  
+  # Handle missing values
+  fillvalue <- ncatt_get(nc_file, "pm2p5", "_FillValue")
+  pm25_array[pm25_array == fillvalue$value] <- NA
+  
+  # Calculate mean across time dimension
+  pm25_mean <- apply(pm25_array, c(1,2), mean, na.rm=TRUE)
+  
+  # Create raster
+  pm25_raster <- raster(t(pm25_mean), 
+                       xmn=min(lon), xmx=max(lon),
+                       ymn=min(lat), ymx=max(lat),
+                       crs=CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs+ towgs84=0,0,0"))
+  
+  # Flip to correct orientation
+  pm25_raster <- flip(pm25_raster, direction='y')
+  
+  # Close NetCDF file
+  nc_close(nc_file)
+  
+  return(pm25_raster)
+}
+
+# Load PM2.5 data (files are ordered: NO2_2023, PM25_2023, NO2_2017, PM25_2017)
+pm25_2023 <- process_pm25_data(files, 2, "2023")  # Second file
+pm25_2017 <- process_pm25_data(files, 4, "2017")  # Fourth file
+
+# Crop to Germany boundaries
+pm25_2023_ger <- crop(pm25_2023, deu_0)
+pm25_2023_ger <- mask(pm25_2023_ger, deu_0)
+pm25_2017_ger <- crop(pm25_2017, deu_0)
+pm25_2017_ger <- mask(pm25_2017_ger, deu_0)
+```
+
+
+A significant overall reduction in PM2.5 levels is evident between the two years. The color scale indicates that the peak concentrations decreased from approximately 15.0 µg/m³ in 2017 to around 10.0 µg/m³ in 2023.
+
+Spatially, the highest concentrations in 2017 were widespread across central and eastern Germany. By 2023, while the levels have dropped nationwide, the pattern has shifted. Relatively higher concentrations persist in eastern Germany, and a new prominent area of higher levels has emerged in the south.
+
+```{r}
+# 2. Visualize PM2.5 Distribution Maps
+
+# Create PM2.5 distribution maps
+df_pm25_2017 <- raster_to_df(pm25_2017_ger, "PM25")
+df_pm25_2023 <- raster_to_df(pm25_2023_ger, "PM25")
+
+# Plot PM2.5 distributions with corrected color scale
+p_pm25_2017 <- ggplot(df_pm25_2017) +
+  geom_raster(aes(x = x, y = y, fill = PM25)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_viridis_c(option = "inferno", name = expression("PM"[2.5]*" (μg/m"^3*")"), 
+                       direction = -1) +  # Add direction = -1 to reverse the scale
+  coord_sf(expand = FALSE) +
+  ggtitle(expression("PM"[2.5]*" Distribution 2017")) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+p_pm25_2023 <- ggplot(df_pm25_2023) +
+  geom_raster(aes(x = x, y = y, fill = PM25)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_viridis_c(option = "inferno", name = expression("PM"[2.5]*" (μg/m"^3*")"),
+                       direction = -1) +  # Add direction = -1 to reverse the scale
+  coord_sf(expand = FALSE) +
+  ggtitle(expression("PM"[2.5]*" Distribution 2023")) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+# Display PM2.5 maps
+grid.arrange(p_pm25_2017, p_pm25_2023, ncol = 2)
+```
+
+
+The map on the left, "Forest Cover Change," shows significant regional variations. Widespread forest loss (indicated in orange/red) is evident across southern and western Germany. In contrast, areas of forest gain (green) are visible in parts of the north and east.
+
+The map on the right, "PM₂.₅ Concentration Change," reveals a clear and widespread decrease in fine particulate matter across the country, indicated by the predominantly blue coloration. The most substantial reductions in PM2.5(darkest blue) occurred in western and southern Germany.
+
+Notably, the regions experiencing the most significant forest loss (west and south) are also the areas that saw the largest improvements in air quality. This suggests that the reduction in PM 
+2.5 was primarily driven by factors other than the change in forest cover.
+```{r}
+# 3. Calculate PM2.5 Changes and Align with Forest Data
+
+# Convert PM2.5 rasters to terra format
+pm25_2017_terra <- rast(pm25_2017_ger)
+pm25_2023_terra <- rast(pm25_2023_ger)
+
+# Resample PM2.5 data to match forest resolution
+pm25_2017_resample <- terra::resample(pm25_2017_terra, forest_2017_resample, method = "bilinear")
+pm25_2023_resample <- terra::resample(pm25_2023_terra, forest_2017_resample, method = "bilinear")
+
+# Calculate PM2.5 change
+pm25_change <- pm25_2023_resample - pm25_2017_resample
+
+# Convert to data frame for plotting
+df_pm25_change <- as.data.frame(pm25_change, xy = TRUE)
+names(df_pm25_change)[3] <- "PM25_Change"
+df_pm25_change <- df_pm25_change[!is.na(df_pm25_change$PM25_Change), ]
+
+# PM2.5 change map
+p_pm25_change <- ggplot(df_pm25_change) +
+  geom_raster(aes(x = x, y = y, fill = PM25_Change)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.5) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red",
+                      midpoint = 0, name = expression("PM"[2.5]*" Change\n(μg/m"^3*")")) +
+  coord_sf(expand = FALSE) +
+  ggtitle(expression("PM"[2.5]*" Concentration Change (2017–2023)")) +
+  theme_minimal() +
+  theme(axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid = element_blank())
+
+# Display combined change maps
+grid.arrange(p_forest_change, p_pm25_change, ncol = 2)
+```
+
+
+This set of maps illustrates the distribution and change in average PM2.5 concentrations across German states between 2017 and 2023.
+
+The 2017 Distribution map shows a distinct geographical pattern where the southern and eastern states experienced the highest concentrations of PM2.5, while the northern states had the lowest levels.
+ 
+By 2023, this pattern had completely inverted. The southern states, particularly Baden-Württemberg and Bavaria, now show the lowest concentrations in the country. The relatively higher levels of PM2.5 are now found in the northern and eastern states.
+
+The Concentration Change map explains this reversal. It shows that nearly all states experienced a decrease in PM2.5 (indicated by red). The most significant reductions (darkest red) occurred in the southern states, which were the most polluted in 2017. Conversely, the cleanest states in the north saw a slight increase from their very low baseline (light blue), leading to the dramatic shift in the national pollution pattern.
+```{r}
+# 4. tmap Visualization for PM2.5
+
+# Extract PM2.5 values for each state
+deu_1$pm25_2017 <- terra::extract(pm25_2017_terra, vect(deu_1), fun = mean, na.rm = TRUE)[,2]
+deu_1$pm25_2023 <- terra::extract(pm25_2023_terra, vect(deu_1), fun = mean, na.rm = TRUE)[,2]
+deu_1$pm25_change <- deu_1$pm25_2023 - deu_1$pm25_2017
+
+# PM2.5 distribution in 2017
+tm_shape(deu_1) +
+  tm_polygons(fill = "pm25_2017", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "inferno"),
+              fill.legend = tm_legend(title = expression("PM"[2.5]*" 2017 (μg/m³)"))) +
+  tm_title(expression("PM"[2.5]*" Distribution in Germany 2017")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+
+# PM2.5 distribution in 2023  
+tm_shape(deu_1) +
+  tm_polygons(fill = "pm25_2023", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "inferno"),
+              fill.legend = tm_legend(title = expression("PM"[2.5]*" 2023 (μg/m³)"))) +
+  tm_title(expression("PM"[2.5]*" Distribution in Germany 2023")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+
+# PM2.5 change (2017-2023)
+tm_shape(deu_1) +
+  tm_polygons(fill = "pm25_change", 
+              fill.scale = tm_scale_intervals(style = "pretty", values = "brewer.rd_bu", midpoint = 0),
+              fill.legend = tm_legend(title = expression("PM"[2.5]*" Change (μg/m³)"))) +
+  tm_title(expression("PM"[2.5]*" Concentration Change (2017-2023)")) +
+  tm_layout(frame = TRUE, 
+            legend.outside = TRUE,
+            legend.outside.position = "right",
+            inner.margins = c(0.02, 0.02, 0.02, 0.02))
+```
+
+
+
+This scatter plot illustrates the relationship between changes in forest cover and changes in PM2.5 concentration at a granular level across Germany from 2017 to 2023.
+
+The analysis finds a weak but highly statistically significant positive correlation (r = 0.256, p < 0.001). The upward-sloping red trend line indicates that areas with greater forest gain (or less forest loss) are unexpectedly associated with smaller reductions in PM2.5 pollution.
+```{r}
+# 5. PM2.5 Descriptive Statistics and Correlation Analysis
+
+# Extract values for analysis
+pm25_change_vals <- values(pm25_change)
+
+# Remove NA values and align with forest change data
+valid_indices_pm25 <- which(!is.na(forest_change_vals) & !is.na(pm25_change_vals))
+forest_change_clean_pm25 <- forest_change_vals[valid_indices_pm25]
+pm25_change_clean <- pm25_change_vals[valid_indices_pm25]
+
+# Descriptive statistics for PM2.5
+cat("=== PM2.5 DESCRIPTIVE STATISTICS ===\n")
+cat("PM2.5 Concentration Change:\n")
+cat("Mean:", round(mean(pm25_change_clean), 4), "\n")
+cat("SD:", round(sd(pm25_change_clean), 4), "\n")
+cat("Min:", round(min(pm25_change_clean), 4), "\n")
+cat("Max:", round(max(pm25_change_clean), 4), "\n")
+cat("Median:", round(median(pm25_change_clean), 4), "\n")
+
+# Correlation Analysis: Forest vs PM2.5
+correlation_pm25 <- cor(forest_change_clean_pm25, pm25_change_clean, method = "pearson")
+cor_test_pm25 <- cor.test(forest_change_clean_pm25, pm25_change_clean)
+
+cat("\n=== FOREST vs PM2.5 CORRELATION ANALYSIS ===\n")
+cat("Pearson Correlation Coefficient:", round(correlation_pm25, 4), "\n")
+cat("P-value:", format(cor_test_pm25$p.value, scientific = TRUE), "\n")
+cat("95% Confidence Interval:", round(cor_test_pm25$conf.int[1], 4), "to", round(cor_test_pm25$conf.int[2], 4), "\n")
+
+# Scatter plot: Forest vs PM2.5
+df_correlation_pm25 <- data.frame(
+  Forest_Change = forest_change_clean_pm25,
+  PM25_Change = pm25_change_clean
+)
+
+p_scatter_pm25 <- ggplot(df_correlation_pm25, aes(x = Forest_Change, y = PM25_Change)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  labs(x = "Forest Cover Change", 
+       y = expression("PM"[2.5]*" Concentration Change (μg/m"^3*")"),
+       title = bquote("Forest Change vs PM"[2.5]*" Change"*
+                     "\nCorrelation: "*.(round(correlation_pm25, 3))*
+                     " (p = "*.(format(cor_test_pm25$p.value, digits = 3))*")")) +
+  theme_minimal()
+
+print(p_scatter_pm25)
+
+```
+
+This map classifies Germany into four distinct zones by comparing local changes in forest cover and PM2.5 against their respective national medians.
+
+The map reveals a stark north-south divide.
+Southern Germany (Predominantly Light Blue & Green): This region is dominated by the "Unexpected 2" category, where significant reductions in PM2.5 occurred despite forest loss. This strongly indicates that factors other than forestry, such as industrial and policy changes, were the main drivers of improved air quality here. Pockets of "Positive Impact" (green) show where both indicators improved favorably.
+
+Northern Germany (Predominantly Red & Orange): This region is characterized by lagging air quality performance. Areas saw either a combination of forest loss and poor air quality outcomes (red) or forest gain that was not met with significant pollution reduction (orange).
+
+```{r}
+# 6. PM2.5 Spatial Overlay Analysis
+
+# Create classification for PM2.5
+classification_vals_pm25 <- create_classification(forest_change_clean_pm25, pm25_change_clean)
+
+# Create a raster for PM2.5 classification
+class_raster_pm25 <- forest_change$`2023_cover_overview_1`
+values(class_raster_pm25)[valid_indices_pm25] <- classification_vals_pm25
+
+# Convert to data frame for plotting
+df_classification_pm25 <- raster_to_df(class_raster_pm25, "Classification")
+df_classification_pm25$Classification <- factor(df_classification_pm25$Classification)
+
+# PM2.5 overlay analysis map
+p_overlay_pm25 <- ggplot(df_classification_pm25) +
+  geom_raster(aes(x = x, y = y, fill = Classification)) +
+  geom_sf(data = deu_0, fill = NA, color = "black", size = 0.8) +
+  scale_fill_manual(values = c("Positive Impact" = "darkgreen",
+                              "Negative Impact" = "red",
+                              "Unexpected 1" = "orange",
+                              "Unexpected 2" = "lightblue"),
+                   na.value = "white") +
+  coord_sf(expand = FALSE) +
+  labs(
+    title = expression("Forest-PM"[2.5]*" Relationship Classification"),
+    subtitle = expression("Green: Forest↑ PM"[2.5]*"↓ | Red: Forest↓ PM"[2.5]*"↑"*"\nOrange: Forest↑ PM"[2.5]*"↑ | Blue: Forest↓ PM"[2.5]*"↓")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    plot.subtitle = element_text(hjust = 0.5, size = 10)
+  )
+
+print(p_overlay_pm25)
+
+# Calculate area percentages for PM2.5
+class_table_pm25 <- table(classification_vals_pm25)
+class_percentages_pm25 <- round(prop.table(class_table_pm25) * 100, 2)
+
+cat("\n=== PM2.5 SPATIAL OVERLAY ANALYSIS ===\n")
+cat("Area distribution by category:\n")
+for(i in names(class_percentages_pm25)) {
+  cat(i, ":", class_percentages_pm25[i], "%\n")
+}
+
+```
+
+
+```{r}
+# 7. Comparative Analysis: NO2 vs PM2.5
+
+# Compare correlations
+cat("\n=== COMPARATIVE ANALYSIS ===\n")
+cat("Forest vs NO₂ correlation:", round(correlation, 3), "\n")
+cat("Forest vs PM2.5 correlation:", round(correlation_pm25, 3), "\n")
+cat("Difference in correlation strength:", round(abs(correlation - correlation_pm25), 3), "\n")
+
+# Test if correlations are significantly different
+# Using Fisher's z-transformation for correlation comparison
+fisher_z_no2 <- 0.5 * log((1 + correlation) / (1 - correlation))
+fisher_z_pm25 <- 0.5 * log((1 + correlation_pm25) / (1 - correlation_pm25))
+se_diff <- sqrt(1/(length(forest_change_clean)-3) + 1/(length(forest_change_clean_pm25)-3))
+z_stat <- (fisher_z_no2 - fisher_z_pm25) / se_diff
+p_diff <- 2 * (1 - pnorm(abs(z_stat)))
+
+cat("P-value for correlation difference:", format(p_diff, scientific = TRUE), "\n")
+
+# Summary table for both pollutants
+summary_stats_combined <- data.frame(
+  Pollutant = c("NO₂", "PM2.5"),
+  Correlation = c(round(correlation, 4), round(correlation_pm25, 4)),
+  P_value = c(format(cor_test$p.value, scientific = TRUE), 
+              format(cor_test_pm25$p.value, scientific = TRUE)),
+  CI_Lower = c(round(cor_test$conf.int[1], 4), round(cor_test_pm25$conf.int[1], 4)),
+  CI_Upper = c(round(cor_test$conf.int[2], 4), round(cor_test_pm25$conf.int[2], 4))
+)
+
+print(summary_stats_combined)
+
+cat("\n=== ANALYSIS COMPLETE ===\n")
+cat("Key Findings for PM2.5:\n")
+cat("1. Correlation coefficient:", round(correlation_pm25, 3), "\n")
+cat("2. Statistical significance: p =", format(cor_test_pm25$p.value, scientific = TRUE), "\n")
+cat("3. Comparison with NO₂: PM2.5 shows", 
+    ifelse(abs(correlation_pm25) > abs(correlation), "stronger", "weaker"), 
+    "correlation with forest change\n")
+```
+# FINAL RESULTS INTERPRETATION
+
+SUMMARY OF FINDINGS:
+  This analysis examined the association between forest cover change and air quality change (NO2 and PM2.5) in Germany between April 2017 and April 2023.
+
+# KEY FINDINGS:
+  1. FOREST-NO2 RELATIONSHIP:
+   
+    - Correlation coefficient: 0.2206 (weak-moderate positive correlation)
+    
+    - P-value: 2.062e-50 (highly significant)
+    
+    - 95% CI: [0.1926, 0.2483]
+    
+    - UNEXPECTED RESULT: Forest increase associated with NO2 increase
+
+  2. FOREST-PM2.5 RELATIONSHIP:
+    
+    - Correlation coefficient: 0.2557 (weak-moderate positive correlation)
+    
+    - P-value: 1.160e-67 (highly significant)
+    
+    - 95% CI: [0.2281, 0.2829]
+    
+    - CONSISTENT PATTERN: Forest increase associated with PM2.5 increase
+
+  3. PM2.5 TRENDS:
+    
+    - Mean change: -2.53 μg/m³ (overall reduction in PM2.5 level)
+    
+    - Median: -3.14 μg/m³ (most places had PM2.5 reduction)
+    
+    - Range: -7.25 to 3.09 μg/m³ (varied spatial patterns)
+
+Both air pollutants exhibit POSITIVE relationships with forest cover changes,which goes against the postulation that forest enhancements increase air quality. This is counterintuitive and suggests:
+
+1. CONFOUNDING VARIABLES: Urbanization, industrialization, and transport infrastructure may be happening simultaneously with forest growth in a region
+
+2. EFFECTS OF SPATIAL SCALE: State-level aggregation may mask local-scale forest advantages while capturing aggregate regional development patterns
+
+3. TEMPORAL LAG: New forest environmental gains may have longer  time scales to materialize (>6 years)
+
+4. METHODOLICAL ISSUES: Analysis measures association, not causation. Forest cover and changes in air quality may both be triggered by common underlying drivers such as land use patterns and economic development
+
+# CONCLUSION:
+While statistically significant, the low correlation values (0.22-0.26) indicate that changes in forest cover explain only 5-7% of variation in changes in air quality. Positive correlations highlight the richness of environmental association and demand the assessment of many confounding factors in environmental effect assessments. 
+
+
+
+
+
+
+
+
